@@ -2,45 +2,45 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Arjun7114/seatlock/internal/api"
 	"github.com/Arjun7114/seatlock/internal/config"
+	"github.com/Arjun7114/seatlock/internal/repository"
+	"github.com/Arjun7114/seatlock/internal/service"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	pool, err := pgxpool.New(ctx, config.DatabaseURL())
+	cancel()
 	if err != nil {
 		logger.Error("failed to create connection pool", "err", err)
 		os.Exit(1)
 	}
 	defer pool.Close()
 
-	// Verify the connection is actually alive.
-	if err := pool.Ping(ctx); err != nil {
-		logger.Error("failed to ping database", "err", err)
-		os.Exit(1)
-	}
-	logger.Info("connected to database")
+	repo := repository.New(pool)
+	bookingSvc := service.NewBookingService(repo)
+	srv := api.NewServer(repo, bookingSvc, logger)
 
-	// Read seeded data back out as a smoke test.
-	var events, seats int
-	err = pool.QueryRow(ctx,
-		`SELECT (SELECT count(*) FROM events), (SELECT count(*) FROM seats)`,
-	).Scan(&events, &seats)
-	if err != nil {
-		logger.Error("query failed", "err", err)
-		os.Exit(1)
+	httpServer := &http.Server{
+		Addr:         ":8080",
+		Handler:      srv.Routes(),
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
 	}
 
-	fmt.Printf("seatlock: db OK — %d event(s), %d seat(s)\n", events, seats)
+	logger.Info("starting http server", "addr", httpServer.Addr)
+	if err := httpServer.ListenAndServe(); err != nil {
+		logger.Error("server stopped", "err", err)
+		os.Exit(1)
+	}
 }

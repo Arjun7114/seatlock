@@ -12,3 +12,8 @@ ON CONFLICT (event_id, seat_label) DO NOTHING;
 
 -- Keep the events id sequence ahead of our hardcoded id=1
 SELECT setval('events_id_seq', (SELECT MAX(id) FROM events));
+-- Test user for pre-auth development (replaced by real auth in Phase 3)
+INSERT INTO users (id, email, password_hash)
+VALUES (1, 'test@seatlock.dev', 'not-a-real-hash')
+ON CONFLICT (id) DO NOTHING;
+SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));
