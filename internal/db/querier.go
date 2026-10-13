@@ -9,7 +9,13 @@ import (
 )
 
 type Querier interface {
+	CreateBooking(ctx context.Context, arg CreateBookingParams) (Booking, error)
+	CreateHold(ctx context.Context, arg CreateHoldParams) (Hold, error)
+	DeleteHold(ctx context.Context, seatID int64) error
+	GetActiveHold(ctx context.Context, seatID int64) (Hold, error)
+	GetBookingBySeat(ctx context.Context, seatID int64) (Booking, error)
 	GetEvent(ctx context.Context, id int64) (Event, error)
+	GetSeat(ctx context.Context, id int64) (Seat, error)
 	ListEvents(ctx context.Context) ([]Event, error)
 	ListSeatsForEvent(ctx context.Context, eventID int64) ([]ListSeatsForEventRow, error)
 }

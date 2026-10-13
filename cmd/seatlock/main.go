@@ -12,6 +12,7 @@ import (
 	"github.com/Arjun7114/seatlock/internal/api"
 	"github.com/Arjun7114/seatlock/internal/config"
 	"github.com/Arjun7114/seatlock/internal/repository"
+	"github.com/Arjun7114/seatlock/internal/service"
 )
 
 func main() {
@@ -27,7 +28,8 @@ func main() {
 	defer pool.Close()
 
 	repo := repository.New(pool)
-	srv := api.NewServer(repo, logger)
+	bookingSvc := service.NewBookingService(repo)
+	srv := api.NewServer(repo, bookingSvc, logger)
 
 	httpServer := &http.Server{
 		Addr:         ":8080",
