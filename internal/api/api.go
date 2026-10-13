@@ -15,13 +15,14 @@ import (
 )
 
 type Server struct {
-	repo    *repository.Repository
-	booking *service.BookingService
-	logger  *slog.Logger
+	repo     *repository.Repository
+	booking  *service.BookingService
+	strategy string
+	logger   *slog.Logger
 }
 
-func NewServer(repo *repository.Repository, booking *service.BookingService, logger *slog.Logger) *Server {
-	return &Server{repo: repo, booking: booking, logger: logger}
+func NewServer(repo *repository.Repository, booking *service.BookingService, strategy string, logger *slog.Logger) *Server {
+	return &Server{repo: repo, booking: booking, strategy: strategy, logger: logger}
 }
 
 // Routes builds the chi router with middleware and endpoints.
@@ -127,7 +128,7 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bookingID, err := s.booking.ConfirmBookingPessimistic(r.Context(), seatID, req.UserID)
+	bookingID, err := s.booking.Confirm(r.Context(), s.strategy, seatID, req.UserID)
 	if err != nil {
 		s.mapServiceError(w, r, err)
 		return

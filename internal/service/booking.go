@@ -192,3 +192,10 @@ func (s *BookingService) ConfirmBookingOptimistic(ctx context.Context, seatID, u
 	}
 	return bookingID, nil
 }
+// Confirm dispatches to the configured locking strategy.
+func (s *BookingService) Confirm(ctx context.Context, strategy string, seatID, userID int64) (int64, error) {
+	if strategy == "optimistic" {
+		return s.ConfirmBookingOptimistic(ctx, seatID, userID)
+	}
+	return s.ConfirmBookingPessimistic(ctx, seatID, userID)
+}

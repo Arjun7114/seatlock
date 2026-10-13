@@ -9,3 +9,10 @@ func DatabaseURL() string {
 	}
 	return "postgres://seatlock:seatlock@localhost:5432/seatlock?sslmode=disable"
 }
+// LockStrategy returns "pessimistic" (default) or "optimistic", from LOCK_STRATEGY.
+func LockStrategy() string {
+	if v := os.Getenv("LOCK_STRATEGY"); v == "optimistic" {
+		return "optimistic"
+	}
+	return "pessimistic"
+}
