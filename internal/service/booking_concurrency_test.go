@@ -103,3 +103,66 @@ func TestConcurrentConfirm_Pessimistic(t *testing.T) {
 		t.Errorf("want exactly 1 booking row, got %d — DOUBLE BOOKING!", rows)
 	}
 }
+func TestConcurrentConfirm_Optimistic(t *testing.T) {
+	svc, pool, seatID := setupTest(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	// Reset the seat's version so the race starts clean.
+	if _, err := pool.Exec(ctx, `UPDATE seats SET version = 0 WHERE id = $1`, seatID); err != nil {
+		t.Fatalf("reset version: %v", err)
+	}
+
+	const goroutines = 100
+
+	var (
+		wg        sync.WaitGroup
+		start     = make(chan struct{})
+		mu        sync.Mutex
+		succeeded int
+		conflicts int
+		other     []error
+	)
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := svc.ConfirmBookingOptimistic(ctx, seatID, 1)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				succeeded++
+			case errors.Is(err, ErrSeatBooked):
+				conflicts++
+			default:
+				other = append(other, err)
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM bookings WHERE seat_id = $1`, seatID,
+	).Scan(&rows); err != nil {
+		t.Fatalf("count bookings: %v", err)
+	}
+
+	t.Logf("RESULTS (optimistic): seat=%d goroutines=%d succeeded=%d conflicts=%d other_errors=%d booking_rows=%d",
+		seatID, goroutines, succeeded, conflicts, len(other), rows)
+
+	if len(other) > 0 {
+		t.Errorf("unexpected errors: %v", other[0])
+	}
+	if succeeded != 1 {
+		t.Errorf("want exactly 1 success, got %d", succeeded)
+	}
+	if rows != 1 {
+		t.Errorf("want exactly 1 booking row, got %d — DOUBLE BOOKING!", rows)
+	}
+}

@@ -31,3 +31,9 @@ SELECT id, event_id, seat_label, version
 FROM seats
 WHERE id = $1
 FOR UPDATE;
+-- name: ClaimSeatOptimistic :execrows
+-- Bumps the seat's version only if it still matches what the caller read.
+-- Returns rows-affected: 1 = this caller won, 0 = someone else already moved it.
+UPDATE seats
+SET version = version + 1
+WHERE id = $1 AND version = $2;

@@ -9,6 +9,9 @@ import (
 )
 
 type Querier interface {
+	// Bumps the seat's version only if it still matches what the caller read.
+	// Returns rows-affected: 1 = this caller won, 0 = someone else already moved it.
+	ClaimSeatOptimistic(ctx context.Context, arg ClaimSeatOptimisticParams) (int64, error)
 	CreateBooking(ctx context.Context, arg CreateBookingParams) (Booking, error)
 	CreateHold(ctx context.Context, arg CreateHoldParams) (Hold, error)
 	DeleteHold(ctx context.Context, seatID int64) error

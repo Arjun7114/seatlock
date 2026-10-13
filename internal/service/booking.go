@@ -138,3 +138,57 @@ func (s *BookingService) ConfirmBookingPessimistic(ctx context.Context, seatID, 
 	}
 	return bookingID, nil
 }
+// ConfirmBookingOptimistic confirms using optimistic concurrency control.
+// It reads the seat's version, then atomically bumps it only if unchanged.
+// If the version moved (someone else claimed it), this caller loses with
+// ErrSeatBooked. No row locks are held — contenders don't block each other.
+func (s *BookingService) ConfirmBookingOptimistic(ctx context.Context, seatID, userID int64) (int64, error) {
+	var bookingID int64
+
+	err := s.repo.WithTx(ctx, func(q *db.Queries) error {
+		// 1. Read current seat + its version.
+		seat, err := q.GetSeat(ctx, seatID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrSeatNotFound
+			}
+			return err
+		}
+
+		// 2. Already booked? (fast path)
+		if _, err := q.GetBookingBySeat(ctx, seatID); err == nil {
+			return ErrSeatBooked
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+
+		// 3. Try to claim by bumping version — only succeeds if version unchanged.
+		affected, err := q.ClaimSeatOptimistic(ctx, db.ClaimSeatOptimisticParams{
+			ID:      seatID,
+			Version: seat.Version,
+		})
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			// Someone else bumped the version between our read and update.
+			return ErrSeatBooked
+		}
+
+		// 4. We won the version race — create the booking.
+		booking, err := q.CreateBooking(ctx, db.CreateBookingParams{
+			SeatID: seatID,
+			UserID: userID,
+		})
+		if err != nil {
+			return err
+		}
+		bookingID = booking.ID
+		return q.DeleteHold(ctx, seatID)
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	return bookingID, nil
+}
