@@ -57,23 +57,22 @@ When two clients race for the same seat, the row lock serializes them — one wi
 sequenceDiagram
     participant A as Client A
     participant B as Client B
-    participant DB as PostgreSQL (seat row)
+    participant DB as PostgreSQL seat row
 
-    A->>DB: BEGIN; SELECT seat FOR UPDATE
+    A->>DB: BEGIN then SELECT seat FOR UPDATE
     Note over A,DB: Client A holds the row lock
-    B->>DB: BEGIN; SELECT seat FOR UPDATE
-    Note over B,DB: Client B BLOCKS — waits for A
+    B->>DB: BEGIN then SELECT seat FOR UPDATE
+    Note over B,DB: Client B BLOCKS, waits for A
 
-    A->>DB: no booking exists → INSERT booking
-    A->>DB: COMMIT (A wins)
+    A->>DB: no booking exists, INSERT booking
+    A->>DB: COMMIT, A wins
 
-    Note over B,DB: lock released → B proceeds
-    B->>DB: booking already exists → reject
-    B-->>B: 409 Conflict (B loses cleanly)
+    Note over B,DB: lock released, B proceeds
+    B->>DB: booking already exists, reject
+    B-->>B: 409 Conflict, B loses cleanly
 
     Note over A,B: Exactly one booking. Zero double-bookings.
 ```
-
 Two independent guarantees prevent double-booking:
 
 1. **Application layer** — the chosen locking strategy (below).
