@@ -31,11 +31,50 @@ The ~2.6× gap is the whole point: row locks on *different* seats don't block ea
 ## How it works
 
 A booking has two steps: a short-lived **hold** (TTL), then a **confirm** that turns the hold into a permanent booking.
+
 POST /v1/seats/{id}/hold → reserve the seat for 2 minutes
 POST /v1/seats/{id}/confirm → commit the booking
 
 
-Both the hold and confirm paths run inside a database transaction and take a row-level lock on the seat, so concurrent requests for the same seat serialize instead of racing. Two independent guarantees prevent double-booking:
+Each request runs inside a database transaction and takes a row-level lock on the seat:
+
+```mermaid
+flowchart LR
+    C["Client"] -->|"POST /hold or /confirm"| API["chi handler"]
+    API --> SVC["booking service"]
+    SVC -->|"BEGIN tx"| TX["transaction"]
+    TX -->|"SELECT ... FOR UPDATE"| LOCK[["lock seat row"]]
+    LOCK --> CHK{"already booked<br/>or held?"}
+    CHK -->|"yes"| ERR["409 Conflict"]
+    CHK -->|"no"| WRITE["insert hold / booking"]
+    WRITE -->|"COMMIT"| OK["201 Created"]
+    WRITE -.->|"UNIQUE(seat_id)<br/>backstop"| DB[("PostgreSQL")]
+```
+
+When two clients race for the same seat, the row lock serializes them — one wins, one loses cleanly:
+
+```mermaid
+sequenceDiagram
+    participant A as Client A
+    participant B as Client B
+    participant DB as PostgreSQL (seat row)
+
+    A->>DB: BEGIN; SELECT seat FOR UPDATE
+    Note over A,DB: Client A holds the row lock
+    B->>DB: BEGIN; SELECT seat FOR UPDATE
+    Note over B,DB: Client B BLOCKS — waits for A
+
+    A->>DB: no booking exists → INSERT booking
+    A->>DB: COMMIT (A wins)
+
+    Note over B,DB: lock released → B proceeds
+    B->>DB: booking already exists → reject
+    B-->>B: 409 Conflict (B loses cleanly)
+
+    Note over A,B: Exactly one booking. Zero double-bookings.
+```
+
+Two independent guarantees prevent double-booking:
 
 1. **Application layer** — the chosen locking strategy (below).
 2. **Database layer** — a `UNIQUE(seat_id)` constraint on `bookings` as a hard backstop. Even a logic bug can't produce two bookings for one seat.
@@ -51,6 +90,7 @@ Selectable at runtime via the `LOCK_STRATEGY` env var (`pessimistic` default, or
 That "when would you pick which" is the real engineering content, and both are proven correct above.
 
 ## Architecture
+
 cmd/seatlock/ HTTP server entrypoint
 cmd/loadtest/ concurrent load generator (hold→confirm, latency percentiles)
 internal/
