@@ -34,43 +34,56 @@ func NewBookingService(repo *repository.Repository) *BookingService {
 
 // PlaceHold reserves a seat for a user for HoldTTL.
 // NOTE: single-threaded correctness only. Concurrency hardening is Phase 4.
+// PlaceHold reserves a seat for a user for HoldTTL.
+// Uses row-level locking (SELECT ... FOR UPDATE) so concurrent holds on the
+// same seat serialize cleanly instead of racing on the unique constraint.
 func (s *BookingService) PlaceHold(ctx context.Context, seatID, userID int64) (int64, error) {
-	if _, err := s.repo.GetSeat(ctx, seatID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrSeatNotFound
+	var holdID int64
+
+	err := s.repo.WithTx(ctx, func(q *db.Queries) error {
+		// 1. Lock the seat row. Concurrent holds on this seat wait here.
+		if _, err := q.LockSeat(ctx, seatID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrSeatNotFound
+			}
+			return err
 		}
-		return 0, err
-	}
 
-	// Already booked?
-	if _, err := s.repo.GetBookingBySeat(ctx, seatID); err == nil {
-		return 0, ErrSeatBooked
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return 0, err
-	}
+		// 2. Already booked?
+		if _, err := q.GetBookingBySeat(ctx, seatID); err == nil {
+			return ErrSeatBooked
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
 
-	// Already actively held?
-	if _, err := s.repo.GetActiveHold(ctx, seatID); err == nil {
-		return 0, ErrSeatHeld
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return 0, err
-	}
+		// 3. Already actively held by someone?
+		if _, err := q.GetActiveHold(ctx, seatID); err == nil {
+			return ErrSeatHeld
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
 
-	// Clear any expired hold, then place a fresh one.
-	if err := s.repo.DeleteHold(ctx, seatID); err != nil {
-		return 0, err
-	}
-
-	expiresAt := pgtype.Timestamptz{Time: time.Now().Add(HoldTTL), Valid: true}
-	hold, err := s.repo.CreateHold(ctx, db.CreateHoldParams{
-		SeatID:    seatID,
-		UserID:    userID,
-		ExpiresAt: expiresAt,
+		// 4. Clear any expired hold, then place a fresh one — all inside the lock.
+		if err := q.DeleteHold(ctx, seatID); err != nil {
+			return err
+		}
+		expiresAt := pgtype.Timestamptz{Time: time.Now().Add(HoldTTL), Valid: true}
+		hold, err := q.CreateHold(ctx, db.CreateHoldParams{
+			SeatID:    seatID,
+			UserID:    userID,
+			ExpiresAt: expiresAt,
+		})
+		if err != nil {
+			return err
+		}
+		holdID = hold.ID
+		return nil
 	})
+
 	if err != nil {
 		return 0, err
 	}
-	return hold.ID, nil
+	return holdID, nil
 }
 
 // ConfirmBooking turns a valid hold into a booking.
