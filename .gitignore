@@ -1,0 +1,21 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/seatlock
+/bin/
+
+# Test & coverage output
+*.out
+coverage.*
+
+# Env & secrets
+.env
+*.local
+
+# Editor / OS
+.idea/
+.DS_Store
+Thumbs.db
