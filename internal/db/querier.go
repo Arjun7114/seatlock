@@ -18,6 +18,8 @@ type Querier interface {
 	GetSeat(ctx context.Context, id int64) (Seat, error)
 	ListEvents(ctx context.Context) ([]Event, error)
 	ListSeatsForEvent(ctx context.Context, eventID int64) ([]ListSeatsForEventRow, error)
+	// Acquires a row-level lock on the seat; concurrent txns on the same seat block here.
+	LockSeat(ctx context.Context, id int64) (Seat, error)
 }
 
 var _ Querier = (*Queries)(nil)

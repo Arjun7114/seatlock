@@ -127,7 +127,7 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bookingID, err := s.booking.ConfirmBooking(r.Context(), seatID, req.UserID)
+	bookingID, err := s.booking.ConfirmBookingPessimistic(r.Context(), seatID, req.UserID)
 	if err != nil {
 		s.mapServiceError(w, r, err)
 		return

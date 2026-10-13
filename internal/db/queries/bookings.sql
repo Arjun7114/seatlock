@@ -25,3 +25,9 @@ WHERE seat_id = $1;
 INSERT INTO bookings (seat_id, user_id)
 VALUES ($1, $2)
 RETURNING id, seat_id, user_id, created_at;
+-- name: LockSeat :one
+-- Acquires a row-level lock on the seat; concurrent txns on the same seat block here.
+SELECT id, event_id, seat_label, version
+FROM seats
+WHERE id = $1
+FOR UPDATE;

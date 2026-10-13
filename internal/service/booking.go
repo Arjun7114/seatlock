@@ -96,3 +96,45 @@ func (s *BookingService) ConfirmBooking(ctx context.Context, seatID, userID int6
 	_ = s.repo.DeleteHold(ctx, seatID) // best-effort cleanup
 	return booking.ID, nil
 }
+// ConfirmBookingPessimistic confirms a booking using row-level locking
+// (SELECT ... FOR UPDATE). Concurrent confirms on the same seat serialize:
+// the first locks the seat row, the rest block until it commits, then see
+// the booking already exists and lose cleanly.
+func (s *BookingService) ConfirmBookingPessimistic(ctx context.Context, seatID, userID int64) (int64, error) {
+	var bookingID int64
+
+	err := s.repo.WithTx(ctx, func(q *db.Queries) error {
+		// 1. Lock the seat row. Other txns on this seat wait here.
+		if _, err := q.LockSeat(ctx, seatID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrSeatNotFound
+			}
+			return err
+		}
+
+		// 2. Inside the lock: is it already booked?
+		if _, err := q.GetBookingBySeat(ctx, seatID); err == nil {
+			return ErrSeatBooked
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+
+		// 3. Still free — create the booking.
+		booking, err := q.CreateBooking(ctx, db.CreateBookingParams{
+			SeatID: seatID,
+			UserID: userID,
+		})
+		if err != nil {
+			return err
+		}
+		bookingID = booking.ID
+
+		// 4. Clean up any hold on this seat.
+		return q.DeleteHold(ctx, seatID)
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	return bookingID, nil
+}

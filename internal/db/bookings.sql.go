@@ -122,3 +122,23 @@ func (q *Queries) GetSeat(ctx context.Context, id int64) (Seat, error) {
 	)
 	return i, err
 }
+
+const lockSeat = `-- name: LockSeat :one
+SELECT id, event_id, seat_label, version
+FROM seats
+WHERE id = $1
+FOR UPDATE
+`
+
+// Acquires a row-level lock on the seat; concurrent txns on the same seat block here.
+func (q *Queries) LockSeat(ctx context.Context, id int64) (Seat, error) {
+	row := q.db.QueryRow(ctx, lockSeat, id)
+	var i Seat
+	err := row.Scan(
+		&i.ID,
+		&i.EventID,
+		&i.SeatLabel,
+		&i.Version,
+	)
+	return i, err
+}
