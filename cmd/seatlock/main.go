@@ -29,8 +29,10 @@ func main() {
 
 	repo := repository.New(pool)
 	bookingSvc := service.NewBookingService(repo)
-	srv := api.NewServer(repo, bookingSvc, logger)
-
+	strategy := config.LockStrategy()
+	srv := api.NewServer(repo, bookingSvc, strategy, logger)
+	logger.Info("lock strategy selected", "strategy", strategy)
+	
 	httpServer := &http.Server{
 		Addr:         ":8080",
 		Handler:      srv.Routes(),

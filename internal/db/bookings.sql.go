@@ -11,6 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimSeatOptimistic = `-- name: ClaimSeatOptimistic :execrows
+UPDATE seats
+SET version = version + 1
+WHERE id = $1 AND version = $2
+`
+
+type ClaimSeatOptimisticParams struct {
+	ID      int64 `json:"id"`
+	Version int32 `json:"version"`
+}
+
+// Bumps the seat's version only if it still matches what the caller read.
+// Returns rows-affected: 1 = this caller won, 0 = someone else already moved it.
+func (q *Queries) ClaimSeatOptimistic(ctx context.Context, arg ClaimSeatOptimisticParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimSeatOptimistic, arg.ID, arg.Version)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createBooking = `-- name: CreateBooking :one
 INSERT INTO bookings (seat_id, user_id)
 VALUES ($1, $2)
@@ -113,6 +134,26 @@ WHERE id = $1
 
 func (q *Queries) GetSeat(ctx context.Context, id int64) (Seat, error) {
 	row := q.db.QueryRow(ctx, getSeat, id)
+	var i Seat
+	err := row.Scan(
+		&i.ID,
+		&i.EventID,
+		&i.SeatLabel,
+		&i.Version,
+	)
+	return i, err
+}
+
+const lockSeat = `-- name: LockSeat :one
+SELECT id, event_id, seat_label, version
+FROM seats
+WHERE id = $1
+FOR UPDATE
+`
+
+// Acquires a row-level lock on the seat; concurrent txns on the same seat block here.
+func (q *Queries) LockSeat(ctx context.Context, id int64) (Seat, error) {
+	row := q.db.QueryRow(ctx, lockSeat, id)
 	var i Seat
 	err := row.Scan(
 		&i.ID,
