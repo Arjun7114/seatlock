@@ -36,12 +36,12 @@ func main() {
 	logger.Info("connected to redis")
 
 	repo := repository.New(pool)
-	bookingSvc := service.NewBookingService(repo)
+	bookingSvc := service.NewBookingService(repo, redisCache)
 	strategy := config.LockStrategy()
 	logger.Info("lock strategy selected", "strategy", strategy)
 	secret := config.JWTSecret()
 	authSvc := service.NewAuthService(repo, secret)
-	srv := api.NewServer(repo, bookingSvc, authSvc, secret, strategy, logger)
+	srv := api.NewServer(repo, bookingSvc, authSvc, redisCache, secret, strategy, logger)
 	
 	
 	httpServer := &http.Server{

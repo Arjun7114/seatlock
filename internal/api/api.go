@@ -3,13 +3,16 @@ package api
 import (
 	"encoding/json"
 	"log/slog"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
-	"errors"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/Arjun7114/seatlock/internal/cache"
 	"github.com/Arjun7114/seatlock/internal/repository"
 	"github.com/Arjun7114/seatlock/internal/service"
 )
@@ -21,10 +24,11 @@ type Server struct {
 	strategy string
 	logger   *slog.Logger
 	secret   string
+	cache    *cache.Cache
 }
 
-func NewServer(repo *repository.Repository, booking *service.BookingService, authSvc *service.AuthService, secret, strategy string, logger *slog.Logger) *Server {
-	return &Server{repo: repo, booking: booking, authSvc: authSvc, secret: secret, strategy: strategy, logger: logger}
+func NewServer(repo *repository.Repository, booking *service.BookingService, authSvc *service.AuthService, c *cache.Cache, secret, strategy string, logger *slog.Logger) *Server {
+	return &Server{repo: repo, booking: booking, authSvc: authSvc, cache: c, secret: secret, strategy: strategy, logger: logger}
 }
 
 // Routes builds the chi router with middleware and endpoints.
@@ -77,12 +81,40 @@ func (s *Server) handleListSeats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheKey := fmt.Sprintf("seats:event:%d", eventID)
+
+	// 1. Try cache first.
+	if s.cache != nil {
+		if cached, err := s.cache.Get(r.Context(), cacheKey); err == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(cached))
+			return
+		}
+	}
+
+	// 2. Cache miss — query the DB.
 	seats, err := s.repo.ListSeatsForEvent(r.Context(), eventID)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, seats)
+
+	// 3. Marshal, store in cache (best-effort, short TTL), return.
+	body, err := json.Marshal(seats)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	if s.cache != nil {
+		_ = s.cache.Set(r.Context(), cacheKey, string(body), 30*time.Second)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", "MISS")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) {
