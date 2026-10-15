@@ -54,24 +54,21 @@ flowchart LR
 When two clients race for the same seat, the row lock serializes them — one wins, one loses cleanly:
 
 ```mermaid
-sequenceDiagram
-    participant A as Client A
-    participant B as Client B
-    participant DB as PostgreSQL (seat row)
+flowchart TB
+    subgraph Race["Two clients, same seat"]
+        A["Client A"] --> LOCKA["BEGIN, lock seat row FOR UPDATE"]
+        B["Client B"] --> LOCKB["BEGIN, lock seat row FOR UPDATE"]
+    end
 
-    A->>DB: BEGIN; SELECT seat FOR UPDATE
-    Note over A,DB: Client A holds the row lock
-    B->>DB: BEGIN; SELECT seat FOR UPDATE
-    Note over B,DB: Client B BLOCKS — waits for A
+    LOCKA --> AWIN["seat free, INSERT booking, COMMIT"]
+    AWIN --> WIN["201 Created, A wins"]
 
-    A->>DB: no booking exists → INSERT booking
-    A->>DB: COMMIT (A wins)
+    LOCKB --> WAIT["blocks until A commits"]
+    WAIT --> BCHK["seat now booked"]
+    BCHK --> LOSE["409 Conflict, B loses cleanly"]
 
-    Note over B,DB: lock released → B proceeds
-    B->>DB: booking already exists → reject
-    B-->>B: 409 Conflict (B loses cleanly)
-
-    Note over A,B: Exactly one booking. Zero double-bookings.
+    WIN --> RESULT["Exactly one booking, zero double-bookings"]
+    LOSE --> RESULT
 ```
 
 Two independent guarantees prevent double-booking:
