@@ -16,3 +16,11 @@ func LockStrategy() string {
 	}
 	return "pessimistic"
 }
+// JWTSecret returns the signing secret for JWTs.
+func JWTSecret() string {
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		return v
+	}
+	// Dev-only fallback. In production this MUST come from the environment.
+	return "dev-secret-change-me"
+}

@@ -14,11 +14,14 @@ type Querier interface {
 	ClaimSeatOptimistic(ctx context.Context, arg ClaimSeatOptimisticParams) (int64, error)
 	CreateBooking(ctx context.Context, arg CreateBookingParams) (Booking, error)
 	CreateHold(ctx context.Context, arg CreateHoldParams) (Hold, error)
+	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	DeleteHold(ctx context.Context, seatID int64) error
 	GetActiveHold(ctx context.Context, seatID int64) (Hold, error)
 	GetBookingBySeat(ctx context.Context, seatID int64) (Booking, error)
 	GetEvent(ctx context.Context, id int64) (Event, error)
 	GetSeat(ctx context.Context, id int64) (Seat, error)
+	GetUserByEmail(ctx context.Context, email string) (User, error)
+	GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, error)
 	ListEvents(ctx context.Context) ([]Event, error)
 	ListSeatsForEvent(ctx context.Context, eventID int64) ([]ListSeatsForEventRow, error)
 	// Acquires a row-level lock on the seat; concurrent txns on the same seat block here.

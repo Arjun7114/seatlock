@@ -16,13 +16,15 @@ import (
 
 type Server struct {
 	repo     *repository.Repository
+	authSvc  *service.AuthService
 	booking  *service.BookingService
 	strategy string
 	logger   *slog.Logger
+	secret   string
 }
 
-func NewServer(repo *repository.Repository, booking *service.BookingService, strategy string, logger *slog.Logger) *Server {
-	return &Server{repo: repo, booking: booking, strategy: strategy, logger: logger}
+func NewServer(repo *repository.Repository, booking *service.BookingService, authSvc *service.AuthService, secret, strategy string, logger *slog.Logger) *Server {
+	return &Server{repo: repo, booking: booking, authSvc: authSvc, secret: secret, strategy: strategy, logger: logger}
 }
 
 // Routes builds the chi router with middleware and endpoints.
@@ -36,10 +38,20 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/healthz", s.handleHealth)
 
 	r.Route("/v1", func(r chi.Router) {
+		// Public reads
 		r.Get("/events", s.handleListEvents)
 		r.Get("/events/{eventID}/seats", s.handleListSeats)
-		r.Post("/seats/{seatID}/hold", s.handlePlaceHold)
-		r.Post("/seats/{seatID}/confirm", s.handleConfirm)
+
+		// Public auth
+		r.Post("/auth/signup", s.handleSignup)
+		r.Post("/auth/login", s.handleLogin)
+
+		// Protected — requires a valid JWT
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAuth)
+			r.Post("/seats/{seatID}/hold", s.handlePlaceHold)
+			r.Post("/seats/{seatID}/confirm", s.handleConfirm)
+		})
 	})
 
 	return r
@@ -102,13 +114,13 @@ func (s *Server) handlePlaceHold(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid seat id")
 		return
 	}
-	var req bookingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == 0 {
-		writeError(w, http.StatusBadRequest, "valid user_id required in body")
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
-	holdID, err := s.booking.PlaceHold(r.Context(), seatID, req.UserID)
+	holdID, err := s.booking.PlaceHold(r.Context(), seatID, userID)
 	if err != nil {
 		s.mapServiceError(w, r, err)
 		return
@@ -122,13 +134,13 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid seat id")
 		return
 	}
-	var req bookingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == 0 {
-		writeError(w, http.StatusBadRequest, "valid user_id required in body")
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
-	bookingID, err := s.booking.Confirm(r.Context(), s.strategy, seatID, req.UserID)
+	bookingID, err := s.booking.Confirm(r.Context(), s.strategy, seatID, userID)
 	if err != nil {
 		s.mapServiceError(w, r, err)
 		return
