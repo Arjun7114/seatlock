@@ -31,8 +31,10 @@ func main() {
 	bookingSvc := service.NewBookingService(repo)
 	strategy := config.LockStrategy()
 	logger.Info("lock strategy selected", "strategy", strategy)
-	authSvc := service.NewAuthService(repo, config.JWTSecret())
-	srv := api.NewServer(repo, bookingSvc, authSvc, strategy, logger)
+	secret := config.JWTSecret()
+	authSvc := service.NewAuthService(repo, secret)
+	srv := api.NewServer(repo, bookingSvc, authSvc, secret, strategy, logger)
+	
 	
 	httpServer := &http.Server{
 		Addr:         ":8080",
