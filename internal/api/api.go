@@ -16,13 +16,14 @@ import (
 
 type Server struct {
 	repo     *repository.Repository
+	authSvc  *service.AuthService
 	booking  *service.BookingService
 	strategy string
 	logger   *slog.Logger
 }
 
-func NewServer(repo *repository.Repository, booking *service.BookingService, strategy string, logger *slog.Logger) *Server {
-	return &Server{repo: repo, booking: booking, strategy: strategy, logger: logger}
+func NewServer(repo *repository.Repository, booking *service.BookingService, authSvc *service.AuthService, strategy string, logger *slog.Logger) *Server {
+	return &Server{repo: repo, booking: booking, authSvc: authSvc, strategy: strategy, logger: logger}
 }
 
 // Routes builds the chi router with middleware and endpoints.
@@ -40,6 +41,8 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/events/{eventID}/seats", s.handleListSeats)
 		r.Post("/seats/{seatID}/hold", s.handlePlaceHold)
 		r.Post("/seats/{seatID}/confirm", s.handleConfirm)
+		r.Post("/auth/signup", s.handleSignup)
+        r.Post("/auth/login", s.handleLogin)
 	})
 
 	return r
