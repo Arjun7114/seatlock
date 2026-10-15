@@ -1,6 +1,6 @@
 # seatlock
 
-A concurrent seat-reservation service in Go that **cannot double-book a seat under load** — demonstrated with 200 concurrent clients and two interchangeable locking strategies, benchmarked against each other.
+A concurrent seat-reservation service in Go that **cannot double-book a seat under load** — with two interchangeable locking strategies, JWT authentication, and Redis-backed caching and rate limiting.
 
 The interesting problem here isn't CRUD. It's correctness under contention: when hundreds of requests race for the last seat, exactly one must win and the rest must lose cleanly. seatlock solves that two different ways and measures the trade-off.
 
@@ -86,15 +86,30 @@ Selectable at runtime via the `LOCK_STRATEGY` env var (`pessimistic` default, or
 
 That "when would you pick which" is the real engineering content, and both are proven correct above.
 
+## Authentication
+
+- **Password hashing: Argon2id** (OWASP 2026 parameters — m=64 MiB, t=3, p=1), stored in self-describing PHC format with a per-password random salt and constant-time verification.
+- **Tokens: JWT** (HS256, 24h expiry). Verification rejects non-HMAC algorithms to prevent algorithm-confusion attacks.
+- Signup and login return a token; login gives a uniform error for unknown-email and wrong-password (no account enumeration).
+- `hold` and `confirm` require a `Bearer` token — the user identity comes from the token, never the request body. Reads stay public.
+
+## Caching & rate limiting
+
+- **Cache-aside** on seat availability (`GET /v1/events/{id}/seats`): served from Redis with a 30s TTL and an `X-Cache: HIT|MISS` header, and **invalidated on every hold/booking** so availability is never stale.
+- **Per-IP rate limiting** via Redis `INCR` (fixed window, 100 req/min), returning `429 Too Many Requests` with `Retry-After`.
+- Both are **best-effort and fail open** — a Redis outage degrades to direct DB reads and unthrottled requests, never an error.
+
 ## Architecture
 
 cmd/seatlock/ HTTP server entrypoint
 cmd/loadtest/ concurrent load generator (hold→confirm, latency percentiles)
 internal/
-api/ chi router, handlers, middleware, domain-error → HTTP mapping
+api/ chi router, handlers, auth + rate-limit middleware
 service/ booking logic + the two locking strategies
 repository/ pgx pool + WithTx transaction helper
 db/ sqlc-generated, type-safe queries (DO NOT EDIT)
+auth/ Argon2id hashing + JWT issue/verify
+cache/ Redis client: cache-aside + rate limiter
 config/ env-driven configuration
 migrations/ golang-migrate SQL schema
 scripts/ seed data
@@ -104,12 +119,12 @@ Layering is `handler → service → repository`. The `service` is where locking
 
 ## Tech stack
 
-Go · PostgreSQL 17 · [pgx](https://github.com/jackc/pgx) · [sqlc](https://sqlc.dev) (type-safe queries) · [chi](https://github.com/go-chi/chi) · [golang-migrate](https://github.com/golang-migrate/migrate) · Docker Compose
+Go · PostgreSQL 17 · Redis 7 · [pgx](https://github.com/jackc/pgx) · [sqlc](https://sqlc.dev) (type-safe queries) · [chi](https://github.com/go-chi/chi) · [golang-jwt](https://github.com/golang-jwt/jwt) · Argon2id · [golang-migrate](https://github.com/golang-migrate/migrate) · Docker Compose
 
 ## Running it
 
 ```bash
-# 1. start Postgres
+# 1. start Postgres + Redis
 docker compose up -d
 
 # 2. apply schema + seed (1 event, 50 seats)
@@ -120,21 +135,24 @@ docker exec -i seatlock-db psql -U seatlock -d seatlock < scripts/seed.sql
 go run ./cmd/seatlock
 # or: set LOCK_STRATEGY=optimistic
 
-# 4. try it
-curl http://localhost:8080/v1/events/1/seats
-curl -X POST http://localhost:8080/v1/seats/1/hold    -H "Content-Type: application/json" -d "{\"user_id\":1}"
-curl -X POST http://localhost:8080/v1/seats/1/confirm -H "Content-Type: application/json" -d "{\"user_id\":1}"
+# 4. sign up, then book (identity comes from the token)
+curl -X POST http://localhost:8080/v1/auth/signup -H "Content-Type: application/json" -d "{\"email\":\"a@b.com\",\"password\":\"supersecret\"}"
+# take the returned token, then:
+curl -X POST http://localhost:8080/v1/seats/1/hold    -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:8080/v1/seats/1/confirm -H "Authorization: Bearer <token>"
 ```
 
 ## API
 
-| Method & path | Description |
-|---------------|-------------|
-| `GET  /healthz` | health check |
-| `GET  /v1/events` | list events |
-| `GET  /v1/events/{id}/seats` | seat availability |
-| `POST /v1/seats/{id}/hold` | place a hold (2-min TTL) |
-| `POST /v1/seats/{id}/confirm` | confirm a booking |
+| Method & path | Auth | Description |
+|---------------|------|-------------|
+| `GET  /healthz` | – | health check |
+| `POST /v1/auth/signup` | – | register, returns a JWT |
+| `POST /v1/auth/login` | – | log in, returns a JWT |
+| `GET  /v1/events` | – | list events |
+| `GET  /v1/events/{id}/seats` | – | seat availability (cached) |
+| `POST /v1/seats/{id}/hold` | Bearer | place a hold (2-min TTL) |
+| `POST /v1/seats/{id}/confirm` | Bearer | confirm a booking |
 
 ## Testing
 
@@ -146,9 +164,10 @@ go build ./cmd/loadtest && go run ./cmd/loadtest -workers 200 -contend  # load
 
 ## Scope & next steps
 
-Deliberately scoped to make the concurrency problem the centerpiece. Not yet built, in priority order:
+Not yet built, in priority order:
 
-- **Authentication** — currently `user_id` is passed in the request body; to be replaced with JWT-based identity.
-- **Caching** — Redis for seat-availability reads; per-user rate limiting.
 - **Observability** — Prometheus metrics and OpenTelemetry traces.
+- **Containerized deploy** — multi-stage Dockerfile + Kubernetes manifests.
 - **Hold expiry sweeper** — expired holds are currently cleared lazily on access; a background reaper would be cleaner.
+
+> Note: the JWT secret falls back to a dev value locally; supply it via `JWT_SECRET` in any real deployment.
