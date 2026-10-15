@@ -38,6 +38,7 @@ func (s *Server) Routes() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(s.rateLimit(100, time.Minute))
 
 	r.Get("/healthz", s.handleHealth)
 

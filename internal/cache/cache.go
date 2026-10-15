@@ -20,6 +20,21 @@ func New(ctx context.Context, addr string) (*Cache, error) {
 	}
 	return &Cache{client: client}, nil
 }
+// Allow implements a fixed-window rate limiter. It increments a counter for
+// `key` and returns false once the count exceeds `limit` within `window`.
+// Best-effort: on a Redis error it fails OPEN (allows the request) so the
+// limiter can never take down the service.
+func (c *Cache) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
+	count, err := c.client.Incr(ctx, key).Result()
+	if err != nil {
+		return true, err // fail open
+	}
+	// First hit in this window — set the expiry.
+	if count == 1 {
+		_ = c.client.Expire(ctx, key, window).Err()
+	}
+	return count <= int64(limit), nil
+}
 
 // Get returns the cached value for key, or redis.Nil error if absent.
 func (c *Cache) Get(ctx context.Context, key string) (string, error) {
