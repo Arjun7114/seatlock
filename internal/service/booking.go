@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"time"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/Arjun7114/seatlock/internal/cache"
 
 	"github.com/Arjun7114/seatlock/internal/db"
 	"github.com/Arjun7114/seatlock/internal/repository"
@@ -25,11 +27,12 @@ var (
 const HoldTTL = 2 * time.Minute
 
 type BookingService struct {
-	repo *repository.Repository
+	repo  *repository.Repository
+	cache *cache.Cache
 }
 
-func NewBookingService(repo *repository.Repository) *BookingService {
-	return &BookingService{repo: repo}
+func NewBookingService(repo *repository.Repository, c *cache.Cache) *BookingService {
+	return &BookingService{repo: repo, cache: c}
 }
 
 // PlaceHold reserves a seat for a user for HoldTTL.
@@ -37,6 +40,20 @@ func NewBookingService(repo *repository.Repository) *BookingService {
 // PlaceHold reserves a seat for a user for HoldTTL.
 // Uses row-level locking (SELECT ... FOR UPDATE) so concurrent holds on the
 // same seat serialize cleanly instead of racing on the unique constraint.
+// invalidateSeatCache clears the cached availability for a seat's event.
+// Best-effort: a cache failure must never block a booking.
+func (s *BookingService) invalidateSeatCache(ctx context.Context, seatID int64) {
+	if s.cache == nil {
+		return
+	}
+	seat, err := s.repo.GetSeat(ctx, seatID)
+	if err != nil {
+		return // can't find the seat's event; skip invalidation
+	}
+	key := fmt.Sprintf("seats:event:%d", seat.EventID)
+	_ = s.cache.Delete(ctx, key) // ignore error — stale cache self-heals via TTL
+}
+
 func (s *BookingService) PlaceHold(ctx context.Context, seatID, userID int64) (int64, error) {
 	var holdID int64
 
@@ -83,6 +100,7 @@ func (s *BookingService) PlaceHold(ctx context.Context, seatID, userID int64) (i
 	if err != nil {
 		return 0, err
 	}
+	s.invalidateSeatCache(ctx, seatID)
 	return holdID, nil
 }
 
@@ -149,7 +167,9 @@ func (s *BookingService) ConfirmBookingPessimistic(ctx context.Context, seatID, 
 	if err != nil {
 		return 0, err
 	}
+	s.invalidateSeatCache(ctx, seatID)
 	return bookingID, nil
+	
 }
 // ConfirmBookingOptimistic confirms using optimistic concurrency control.
 // It reads the seat's version, then atomically bumps it only if unchanged.

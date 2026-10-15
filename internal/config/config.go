@@ -24,3 +24,10 @@ func JWTSecret() string {
 	// Dev-only fallback. In production this MUST come from the environment.
 	return "dev-secret-change-me"
 }
+// RedisAddr returns the Redis address, overridable by env var.
+func RedisAddr() string {
+	if v := os.Getenv("REDIS_ADDR"); v != "" {
+		return v
+	}
+	return "localhost:6379"
+}

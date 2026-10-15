@@ -13,6 +13,7 @@ import (
 	"github.com/Arjun7114/seatlock/internal/config"
 	"github.com/Arjun7114/seatlock/internal/repository"
 	"github.com/Arjun7114/seatlock/internal/service"
+	"github.com/Arjun7114/seatlock/internal/cache"
 )
 
 func main() {
@@ -26,14 +27,21 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+		redisCache, err := cache.New(context.Background(), config.RedisAddr())
+	if err != nil {
+		logger.Error("failed to connect to redis", "err", err)
+		os.Exit(1)
+	}
+	defer redisCache.Close()
+	logger.Info("connected to redis")
 
 	repo := repository.New(pool)
-	bookingSvc := service.NewBookingService(repo)
+	bookingSvc := service.NewBookingService(repo, redisCache)
 	strategy := config.LockStrategy()
 	logger.Info("lock strategy selected", "strategy", strategy)
 	secret := config.JWTSecret()
 	authSvc := service.NewAuthService(repo, secret)
-	srv := api.NewServer(repo, bookingSvc, authSvc, secret, strategy, logger)
+	srv := api.NewServer(repo, bookingSvc, authSvc, redisCache, secret, strategy, logger)
 	
 	
 	httpServer := &http.Server{
