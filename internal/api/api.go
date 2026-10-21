@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/Arjun7114/seatlock/internal/cache"
+	"github.com/Arjun7114/seatlock/internal/config"
 	"github.com/Arjun7114/seatlock/internal/repository"
 	"github.com/Arjun7114/seatlock/internal/service"
 )
@@ -36,9 +37,13 @@ func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	if config.TrustProxy() {
+		r.Use(middleware.RealIP) // trust X-Forwarded-For only behind a known proxy
+	}
 	r.Use(middleware.Recoverer)
-	r.Use(s.rateLimit(100, time.Minute))
+	if rpm := config.RateLimitPerMinute(); rpm > 0 {
+		r.Use(s.rateLimit(rpm, time.Minute))
+	}
 
 	r.Get("/healthz", s.handleHealth)
 
