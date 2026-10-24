@@ -8,16 +8,25 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/Arjun7114/seatlock/internal/api"
 	"github.com/Arjun7114/seatlock/internal/config"
 	"github.com/Arjun7114/seatlock/internal/repository"
 	"github.com/Arjun7114/seatlock/internal/service"
 	"github.com/Arjun7114/seatlock/internal/cache"
+	"github.com/Arjun7114/seatlock/internal/telemetry"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	otelShutdown, err := telemetry.Setup(context.Background())
+	if err != nil {
+		logger.Error("failed to set up telemetry", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = otelShutdown(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	pool, err := pgxpool.New(ctx, config.DatabaseURL())
@@ -27,7 +36,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-		redisCache, err := cache.New(context.Background(), config.RedisAddr())
+	redisCache, err := cache.New(context.Background(), config.RedisAddr())
 	if err != nil {
 		logger.Error("failed to connect to redis", "err", err)
 		os.Exit(1)
@@ -42,11 +51,10 @@ func main() {
 	secret := config.JWTSecret()
 	authSvc := service.NewAuthService(repo, secret)
 	srv := api.NewServer(repo, bookingSvc, authSvc, redisCache, secret, strategy, logger)
-	
-	
+
 	httpServer := &http.Server{
 		Addr:         ":8080",
-		Handler:      srv.Routes(),
+		Handler:      otelhttp.NewHandler(srv.Routes(), "seatlock"),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
